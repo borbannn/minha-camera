@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <h3>Câmera</h3>
+  <video id="v" autoplay muted playsinline width="300"></video>
+  <p id="s">Iniciando...</p>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script>
+    // Troque por um código longo e aleatório: ele funciona como a "senha"
+    const ID = "cam-k8x2m9qw7trz4plv3nb6";
+
+    const peer = new Peer(ID);
+    let stream;
+
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: "environment" }, audio: false })
+      .then(s => { stream = s; v.srcObject = s; });
+
+    peer.on("open", () => s.textContent = "Aguardando visualizador...");
+    peer.on("call", call => {
+      call.answer(stream);
+      s.textContent = "Transmitindo!";
+    });
+  </script>
+</body>
+</html>

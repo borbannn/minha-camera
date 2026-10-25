@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <h3>Monitoramento</h3>
+  <video id="v" autoplay playsinline controls width="400"></video>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script>
+    const ID = "cam-k8x2m9qw7trz4plv3nb6"; // o mesmo da câmera
+
+    const peer = new Peer();
+    peer.on("open", () => {
+      // WebRTC exige enviar algum stream; usamos um vazio
+      const vazio = document.createElement("canvas").captureStream();
+      const call = peer.call(ID, vazio);
+      call.on("stream", remoto => v.srcObject = remoto);
+    });
+  </script>
+</body>
+</html>
