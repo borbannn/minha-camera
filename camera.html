@@ -1,29 +1,81 @@
 <!DOCTYPE html>
 <html>
 <body>
-  <h3>Monitoramento</h3>
-  <video id="v" autoplay muted playsinline controls width="400"></video>
+  <h3>Câmera</h3>
+  <video id="v" autoplay muted playsinline width="300"></video>
   <p id="s">Iniciando...</p>
+  <p id="t"></p>
+  <button id="b" style="font-size:18px;padding:12px 20px;">Alternar câmera</button>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
     const ID = "cam-k8x2m9qw7trz4plv3nb6"; // o mesmo da câmera
 
-    const peer = new Peer();
-    peer.on("error", e => s.textContent = "Erro do Peer: " + e.type);
+    const peer = new Peer(ID);
+    let stream = null;
+    let wakeLock = null;
+    let facing = "environment"; // começa na traseira
+    let calls = [];             // visualizadores conectados
 
-    peer.on("open", () => {
-      s.textContent = "Conectado ao servidor. Chamando a câmera...";
-      const vazio = document.createElement("canvas").captureStream();
-      const call = peer.call(ID, vazio);
-
-      call.on("stream", remoto => {
-        v.srcObject = remoto;
-        v.play().catch(() => {});
-        s.textContent = "Recebendo vídeo!";
-      });
-      call.on("error", e => s.textContent = "Erro na chamada: " + e);
-      call.on("close", () => s.textContent = "Chamada encerrada");
+    // ---- Tela sempre ligada ----
+    async function manterTelaLigada() {
+      try {
+        wakeLock = await navigator.wakeLock.request("screen");
+        t.textContent = "Tela mantida ligada ✔";
+        wakeLock.addEventListener("release", () => {
+          t.textContent = "Tela pode apagar ✖";
+        });
+      } catch (e) {
+        t.textContent = "Tela acesa indisponível: " + e.message;
+      }
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") manterTelaLigada();
     });
+
+    // ---- Câmera ----
+    async function abrirCamera() {
+      // Libera a câmera atual antes de abrir a outra
+      if (stream) stream.getTracks().forEach(tr => tr.stop());
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: facing } },
+          audio: false
+        });
+      } catch (e) {
+        s.textContent = "Erro ao abrir a câmera: " + e.message;
+        return;
+      }
+
+      v.srcObject = stream;
+      const novaTrilha = stream.getVideoTracks()[0];
+
+      // Troca o vídeo de quem já está assistindo, sem derrubar a conexão
+      calls.forEach(c => {
+        const sender = c.peerConnection.getSenders()
+          .find(x => x.track && x.track.kind === "video");
+        if (sender) sender.replaceTrack(novaTrilha);
+      });
+    }
+
+    b.onclick = () => {
+      facing = (facing === "environment") ? "user" : "environment";
+      abrirCamera();
+    };
+
+    // ---- Conexão ----
+    peer.on("open", () => s.textContent = "Aguardando visualizador...");
+    peer.on("call", call => {
+      call.answer(stream);
+      calls.push(call);
+      s.textContent = "Transmitindo!";
+      call.on("close", () => {
+        calls = calls.filter(c => c !== call);
+      });
+    });
+
+    // ---- Início ----
+    abrirCamera().then(manterTelaLigada);
   </script>
 </body>
 </html>
