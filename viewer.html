@@ -23,6 +23,7 @@
     const CHAVE = "3a0ebc7cce29d7b522e7a00fd6ecd881b510d1ab05f44ec066a8090da2b79e01";
     const TEMPO_LIMITE = 10000;    // sem ping por 10s = câmera offline
     const INTERVALO_RETRY = 5000;  // tenta reconectar a cada 5s
+    const SALTO_TELA = 6000;       // página parada por mais de 6s = tela esteve apagada
 
     function lerSenha()    { try { return localStorage.getItem(CHAVE); } catch (e) { return null; } }
     function salvarSenha(x){ try { localStorage.setItem(CHAVE, x); } catch (e) {} }
@@ -42,6 +43,7 @@
     let tentando = false;
     let ultimoPing = 0;
     let timerRetry = null;
+    let timerVoltar = null;
     let tentativas = 0;
 
     function agendarRetry() {
@@ -126,9 +128,63 @@
       c.on("close", () => { if (conn === c) ficouOffline(); });
     }
 
-    // Vigia: se a câmera parar de mandar ping, está offline
+    // Derruba o que estiver aberto e tenta de novo (usado pelo botão e pela volta da tela)
+    function reconectarAgora() {
+      clearTimeout(timerRetry);
+      timerRetry = null;
+      const c = conn, k = call;
+      conn = null;
+      call = null;
+      try { if (k) k.close(); } catch (e) {}
+      try { if (c) c.close(); } catch (e) {}
+      conectado = false;
+      tentando = false;
+      v.srcObject = null;
+
+      // Sem senha digitada nesta sessão, o jeito é recarregar a página
+      if (!senhaAtual || peer.destroyed) { location.reload(); return; }
+
+      s.textContent = "Atualizando...";
+      mostrarEstado("Conectando à câmera...", "#ef6c00");
+      if (peer.disconnected) peer.reconnect();
+      setTimeout(conectar, 1000);
+    }
+
+    // A tela voltou (ou a rede voltou): confere se ainda está tudo vivo
+    function aoVoltar() {
+      if (!senhaAtual || timerVoltar) return;   // sem login ainda, ou já verificando
+      mostrarEstado("Verificando conexão...", "#ef6c00");
+      timerVoltar = setTimeout(() => {
+        timerVoltar = null;
+        const vivo = conectado && (Date.now() - ultimoPing < 5000);
+        if (vivo) {
+          mostrarEstado("● Câmera online", "#2e7d32");
+        } else {
+          reconectarAgora();
+        }
+      }, 1500);
+    }
+
+    // Eventos de volta da tela/rede
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") aoVoltar();
+    });
+    window.addEventListener("focus", aoVoltar);
+    window.addEventListener("pageshow", aoVoltar);
+    window.addEventListener("online", aoVoltar);
+
+    // Vigia: ping da câmera + detector de "página congelada"
+    let ultimoTick = Date.now();
     setInterval(() => {
-      if (conectado && Date.now() - ultimoPing > TEMPO_LIMITE) ficouOffline();
+      const agora = Date.now();
+      const parada = agora - ultimoTick;
+      ultimoTick = agora;
+
+      if (parada > SALTO_TELA) {   // a página ficou suspensa: provavelmente tela apagada
+        aoVoltar();
+        return;
+      }
+      if (conectado && agora - ultimoPing > TEMPO_LIMITE) ficouOffline();
     }, 2000);
 
     peer.on("open", () => {
@@ -169,28 +225,7 @@
       location.reload();
     };
 
-    atu.onclick = () => {
-      // Cancela a espera por uma nova tentativa e derruba o que estiver aberto
-      clearTimeout(timerRetry);
-      timerRetry = null;
-      const c = conn, k = call;
-      conn = null;
-      call = null;
-      try { if (k) k.close(); } catch (e) {}
-      try { if (c) c.close(); } catch (e) {}
-      conectado = false;
-      tentando = false;
-      v.srcObject = null;
-
-      // Sem senha digitada nesta sessão, o jeito é recarregar a página
-      if (!senhaAtual || peer.destroyed) { location.reload(); return; }
-
-      s.textContent = "Atualizando...";
-      mostrarEstado("Conectando à câmera...", "#ef6c00");
-      // Se perdeu o contato com o servidor do PeerJS, reconecta antes
-      if (peer.disconnected) peer.reconnect();
-      setTimeout(conectar, 1000);
-    };
+    atu.onclick = reconectarAgora;
   </script>
 </body>
 </html>
