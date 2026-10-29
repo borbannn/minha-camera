@@ -8,17 +8,28 @@
   <button id="b" style="font-size:18px;padding:12px 20px;">Alternar câmera</button>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
-    const ID = "cam-k8x2m9qw7trz4plv3nb6"; // o mesmo da câmera
+    const ID = "cam-k8x2m9qw7trz4plv3nb6";
     const SENHA_HASH = "3a0ebc7cce29d7b522e7a00fd6ecd881b510d1ab05f44ec066a8090da2b79e01";
 
     const peer = new Peer(ID);
-    peer.on("error", e => s.textContent = "Erro do Peer: " + e.type);
+
+    peer.on("error", e => {
+      s.textContent = "Erro do Peer: " + e.type;
+      // ID ainda preso de uma sessão anterior: tenta de novo em 10s
+      if (e.type === "unavailable-id") setTimeout(() => location.reload(), 10000);
+    });
+    // Perdeu o contato com o servidor: tenta voltar
+    peer.on("disconnected", () => {
+      s.textContent = "Reconectando ao servidor...";
+      peer.reconnect();
+    });
 
     let stream = null;
     let wakeLock = null;
     let facing = "environment";
     let calls = [];
-    const autorizados = new Set(); // visualizadores que acertaram a senha
+    const autorizados = new Set();
+    const conexoes = new Set();
 
     async function sha256(texto) {
       const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(texto));
@@ -64,11 +75,13 @@
       facing = (facing === "environment") ? "user" : "environment";
       abrirCamera();
     }
-
     b.onclick = alternarCamera;
 
     // ---- Senha e comandos do visualizador ----
     peer.on("connection", conn => {
+      conexoes.add(conn);
+      conn.on("close", () => conexoes.delete(conn));
+
       conn.on("data", async msg => {
         if (!msg) return;
 
@@ -78,12 +91,20 @@
           conn.send({ tipo: "resultado", ok });
         }
 
-        // só quem acertou a senha pode mandar comandos
         if (msg.tipo === "alternar" && autorizados.has(conn.peer)) {
           alternarCamera();
         }
       });
     });
+
+    // ---- Sinal de vida: ping a cada 3s para quem está autorizado ----
+    setInterval(() => {
+      conexoes.forEach(c => {
+        if (c.open && autorizados.has(c.peer)) {
+          try { c.send({ tipo: "ping" }); } catch (e) {}
+        }
+      });
+    }, 3000);
 
     // ---- Chamada de vídeo (só para quem acertou a senha) ----
     peer.on("open", () => s.textContent = "Aguardando visualizador...");
