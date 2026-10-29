@@ -9,21 +9,28 @@
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
     const ID = "cam-k8x2m9qw7trz4plv3nb6"; // o mesmo da câmera
+    const SENHA_HASH = "3a0ebc7cce29d7b522e7a00fd6ecd881b510d1ab05f44ec066a8090da2b79e01";
 
     const peer = new Peer(ID);
+    peer.on("error", e => s.textContent = "Erro do Peer: " + e.type);
+
     let stream = null;
     let wakeLock = null;
-    let facing = "environment"; // começa na traseira
-    let calls = [];             // visualizadores conectados
+    let facing = "environment";
+    let calls = [];
+    const autorizados = new Set(); // visualizadores que acertaram a senha
+
+    async function sha256(texto) {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(texto));
+      return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+    }
 
     // ---- Tela sempre ligada ----
     async function manterTelaLigada() {
       try {
         wakeLock = await navigator.wakeLock.request("screen");
         t.textContent = "Tela mantida ligada ✔";
-        wakeLock.addEventListener("release", () => {
-          t.textContent = "Tela pode apagar ✖";
-        });
+        wakeLock.addEventListener("release", () => t.textContent = "Tela pode apagar ✖");
       } catch (e) {
         t.textContent = "Tela acesa indisponível: " + e.message;
       }
@@ -34,9 +41,7 @@
 
     // ---- Câmera ----
     async function abrirCamera() {
-      // Libera a câmera atual antes de abrir a outra
       if (stream) stream.getTracks().forEach(tr => tr.stop());
-
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: facing } },
@@ -46,11 +51,8 @@
         s.textContent = "Erro ao abrir a câmera: " + e.message;
         return;
       }
-
       v.srcObject = stream;
       const novaTrilha = stream.getVideoTracks()[0];
-
-      // Troca o vídeo de quem já está assistindo, sem derrubar a conexão
       calls.forEach(c => {
         const sender = c.peerConnection.getSenders()
           .find(x => x.track && x.track.kind === "video");
@@ -63,9 +65,24 @@
       abrirCamera();
     };
 
-    // ---- Conexão ----
+    // ---- Senha ----
+    peer.on("connection", conn => {
+      conn.on("data", async msg => {
+        if (msg && msg.tipo === "senha") {
+          const ok = (await sha256(String(msg.valor))) === SENHA_HASH;
+          if (ok) autorizados.add(conn.peer);
+          conn.send({ tipo: "resultado", ok });
+        }
+      });
+    });
+
+    // ---- Chamada de vídeo (só para quem acertou a senha) ----
     peer.on("open", () => s.textContent = "Aguardando visualizador...");
     peer.on("call", call => {
+      if (!autorizados.has(call.peer) || !stream) {
+        call.close();
+        return;
+      }
       call.answer(stream);
       calls.push(call);
       s.textContent = "Transmitindo!";
@@ -74,7 +91,6 @@
       });
     });
 
-    // ---- Início ----
     abrirCamera().then(manterTelaLigada);
   </script>
 </body>

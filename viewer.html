@@ -2,18 +2,45 @@
 <html>
 <body>
   <h3>Monitoramento</h3>
-  <video id="v" autoplay playsinline controls width="400"></video>
+  <div id="login">
+    <input id="senha" type="password" placeholder="Senha" size="25">
+    <button id="entrar">Entrar</button>
+  </div>
+  <video id="v" autoplay muted playsinline controls width="400"></video>
+  <p id="s">Iniciando...</p>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
     const ID = "cam-k8x2m9qw7trz4plv3nb6"; // o mesmo da câmera
 
     const peer = new Peer();
-    peer.on("open", () => {
-      // WebRTC exige enviar algum stream; usamos um vazio
-      const vazio = document.createElement("canvas").captureStream();
-      const call = peer.call(ID, vazio);
-      call.on("stream", remoto => v.srcObject = remoto);
-    });
+    let pronto = false;
+    peer.on("open", () => { pronto = true; s.textContent = "Digite a senha."; });
+    peer.on("error", e => s.textContent = "Erro do Peer: " + e.type);
+
+    entrar.onclick = () => {
+      if (!pronto) { s.textContent = "Aguarde a conexão..."; return; }
+      s.textContent = "Verificando senha...";
+      const conn = peer.connect(ID);
+      conn.on("open", () => conn.send({ tipo: "senha", valor: senha.value }));
+      conn.on("data", msg => {
+        if (msg && msg.tipo === "resultado") {
+          if (msg.ok) {
+            s.textContent = "Senha correta. Chamando a câmera...";
+            login.style.display = "none";
+            const vazio = document.createElement("canvas").captureStream();
+            const call = peer.call(ID, vazio);
+            call.on("stream", remoto => {
+              v.srcObject = remoto;
+              v.play().catch(() => {});
+              s.textContent = "Recebendo vídeo!";
+            });
+            call.on("close", () => s.textContent = "Chamada encerrada");
+          } else {
+            s.textContent = "Senha incorreta.";
+          }
+        }
+      });
+    };
   </script>
 </body>
 </html>
