@@ -15,6 +15,7 @@
   <br>
   <button id="alt" style="display:none;font-size:18px;padding:12px 20px;">Alternar câmera</button>
   <button id="esq" style="display:none;font-size:14px;padding:8px 12px;">Esquecer senha</button>
+  <button id="atu" style="font-size:16px;padding:10px 16px;">Atualizar</button>
   <p id="s">Iniciando...</p>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
@@ -41,11 +42,13 @@
     let tentando = false;
     let ultimoPing = 0;
     let timerRetry = null;
+    let tentativas = 0;
 
     function agendarRetry() {
       if (timerRetry || !senhaAtual) return;
       timerRetry = setTimeout(() => {
         timerRetry = null;
+        tentativas++;
         conectar();
       }, INTERVALO_RETRY);
     }
@@ -63,7 +66,7 @@
 
       v.srcObject = null;  // some a imagem congelada
       mostrarEstado("● Câmera offline", "#c62828");
-      s.textContent = "Câmera offline. Tentando reconectar...";
+      s.textContent = "Câmera offline. Tentativas de reconexão: " + tentativas;
       if (eraOnline && navigator.vibrate) {
         try { navigator.vibrate([300, 150, 300]); } catch (e) {}
       }
@@ -71,6 +74,7 @@
     }
 
     function iniciarVideo() {
+      tentativas = 0;
       conectado = true;
       tentando = false;
       ultimoPing = Date.now();
@@ -163,6 +167,29 @@
     esq.onclick = () => {
       apagarSenha();
       location.reload();
+    };
+
+    atu.onclick = () => {
+      // Cancela a espera por uma nova tentativa e derruba o que estiver aberto
+      clearTimeout(timerRetry);
+      timerRetry = null;
+      const c = conn, k = call;
+      conn = null;
+      call = null;
+      try { if (k) k.close(); } catch (e) {}
+      try { if (c) c.close(); } catch (e) {}
+      conectado = false;
+      tentando = false;
+      v.srcObject = null;
+
+      // Sem senha digitada nesta sessão, o jeito é recarregar a página
+      if (!senhaAtual || peer.destroyed) { location.reload(); return; }
+
+      s.textContent = "Atualizando...";
+      mostrarEstado("Conectando à câmera...", "#ef6c00");
+      // Se perdeu o contato com o servidor do PeerJS, reconecta antes
+      if (peer.disconnected) peer.reconnect();
+      setTimeout(conectar, 1000);
     };
   </script>
 </body>
