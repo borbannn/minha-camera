@@ -60,18 +60,27 @@
       });
     }
 
-    b.onclick = () => {
+    function alternarCamera() {
       facing = (facing === "environment") ? "user" : "environment";
       abrirCamera();
-    };
+    }
 
-    // ---- Senha ----
+    b.onclick = alternarCamera;
+
+    // ---- Senha e comandos do visualizador ----
     peer.on("connection", conn => {
       conn.on("data", async msg => {
-        if (msg && msg.tipo === "senha") {
+        if (!msg) return;
+
+        if (msg.tipo === "senha") {
           const ok = (await sha256(String(msg.valor))) === SENHA_HASH;
           if (ok) autorizados.add(conn.peer);
           conn.send({ tipo: "resultado", ok });
+        }
+
+        // só quem acertou a senha pode mandar comandos
+        if (msg.tipo === "alternar" && autorizados.has(conn.peer)) {
+          alternarCamera();
         }
       });
     });
