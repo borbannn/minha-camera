@@ -5,30 +5,52 @@
   <div id="login">
     <input id="senha" type="password" placeholder="Senha" size="25">
     <button id="entrar">Entrar</button>
+    <br>
+    <label><input type="checkbox" id="lembrar"> Lembrar senha neste aparelho</label>
   </div>
   <video id="v" autoplay muted playsinline controls width="400"></video>
   <br>
   <button id="alt" style="display:none;font-size:18px;padding:12px 20px;">Alternar câmera</button>
+  <button id="esq" style="display:none;font-size:14px;padding:8px 12px;">Esquecer senha</button>
   <p id="s">Iniciando...</p>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
-    const ID = "cam-k8x2m9qw7trz4plv3nb6"; // o mesmo da câmera
+    const ID = "cam-k8x2m9qw7trz4plv3nb6";
+    const CHAVE = "3a0ebc7cce29d7b522e7a00fd6ecd881b510d1ab05f44ec066a8090da2b79e01";
+
+    // O armazenamento pode estar indisponível (modo anônimo, alguns WebViews)
+    function lerSenha()    { try { return localStorage.getItem(CHAVE); } catch (e) { return null; } }
+    function salvarSenha(x){ try { localStorage.setItem(CHAVE, x); } catch (e) {} }
+    function apagarSenha() { try { localStorage.removeItem(CHAVE); } catch (e) {} }
 
     const peer = new Peer();
     let pronto = false;
     let conn = null;
 
-    peer.on("open", () => { pronto = true; s.textContent = "Digite a senha."; });
+    peer.on("open", () => {
+      pronto = true;
+      const salva = lerSenha();
+      if (salva) {
+        senha.value = salva;
+        lembrar.checked = true;
+        entrar.click();            // entra sozinho com a senha salva
+      } else {
+        s.textContent = "Digite a senha.";
+      }
+    });
     peer.on("error", e => s.textContent = "Erro do Peer: " + e.type);
 
     entrar.onclick = () => {
       if (!pronto) { s.textContent = "Aguarde a conexão..."; return; }
       s.textContent = "Verificando senha...";
+      const tentativa = senha.value;
       conn = peer.connect(ID);
-      conn.on("open", () => conn.send({ tipo: "senha", valor: senha.value }));
+      conn.on("open", () => conn.send({ tipo: "senha", valor: tentativa }));
       conn.on("data", msg => {
         if (msg && msg.tipo === "resultado") {
           if (msg.ok) {
+            if (lembrar.checked) { salvarSenha(tentativa); esq.style.display = "inline-block"; }
+            else apagarSenha();
             s.textContent = "Senha correta. Chamando a câmera...";
             login.style.display = "none";
             alt.style.display = "inline-block";
@@ -41,6 +63,7 @@
             });
             call.on("close", () => s.textContent = "Chamada encerrada");
           } else {
+            apagarSenha();         // senha salva errada não fica se repetindo
             s.textContent = "Senha incorreta.";
           }
         }
@@ -49,6 +72,11 @@
 
     alt.onclick = () => {
       if (conn && conn.open) conn.send({ tipo: "alternar" });
+    };
+
+    esq.onclick = () => {
+      apagarSenha();
+      location.reload();
     };
   </script>
 </body>
