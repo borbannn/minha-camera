@@ -1,25 +1,28 @@
 <!DOCTYPE html>
 <html>
 <body>
-  <h3>Câmera</h3>
-  <video id="v" autoplay muted playsinline width="300"></video>
+  <h3>Monitoramento</h3>
+  <video id="v" autoplay muted playsinline controls width="400"></video>
   <p id="s">Iniciando...</p>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
-    // Troque por um código longo e aleatório: ele funciona como a "senha"
-    const ID = "cam-k8x2m9qw7trz4plv3nb6";
+    const ID = "cam-k8x2m9qw7trz4plv3nb6"; // o mesmo da câmera
 
-    const peer = new Peer(ID);
-    let stream;
+    const peer = new Peer();
+    peer.on("error", e => s.textContent = "Erro do Peer: " + e.type);
 
-    navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: "environment" }, audio: false })
-      .then(s => { stream = s; v.srcObject = s; });
+    peer.on("open", () => {
+      s.textContent = "Conectado ao servidor. Chamando a câmera...";
+      const vazio = document.createElement("canvas").captureStream();
+      const call = peer.call(ID, vazio);
 
-    peer.on("open", () => s.textContent = "Aguardando visualizador...");
-    peer.on("call", call => {
-      call.answer(stream);
-      s.textContent = "Transmitindo!";
+      call.on("stream", remoto => {
+        v.srcObject = remoto;
+        v.play().catch(() => {});
+        s.textContent = "Recebendo vídeo!";
+      });
+      call.on("error", e => s.textContent = "Erro na chamada: " + e);
+      call.on("close", () => s.textContent = "Chamada encerrada");
     });
   </script>
 </body>
