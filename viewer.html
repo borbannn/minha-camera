@@ -14,16 +14,19 @@
   <video id="v" autoplay muted playsinline controls width="400"></video>
   <br>
   <button id="alt" style="display:none;font-size:18px;padding:12px 20px;">Alternar câmera</button>
+  <button id="lan" style="display:none;font-size:18px;padding:12px 20px;">Lanterna: desligada</button>
   <button id="esq" style="display:none;font-size:14px;padding:8px 12px;">Esquecer senha</button>
   <button id="atu" style="font-size:16px;padding:10px 16px;">Atualizar</button>
   <p id="s">Iniciando...</p>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
     const ID = "cam-k8x2m9qw7trz4plv3nb6";
-    const CHAVE = "3a0ebc7cce29d7b522e7a00fd6ecd881b510d1ab05f44ec066a8090da2b79e01";
-    const TEMPO_LIMITE = 10000;    // sem ping por 10s = câmera offline
-    const INTERVALO_RETRY = 5000;  // tenta reconectar a cada 5s
-    const SALTO_TELA = 6000;       // página parada por mais de 6s = tela esteve apagada
+    const CHAVE = "senha-camera";    // nome da gaveta onde a senha salva fica guardada
+    const TEMPO_LIMITE = 10000;      // sem ping por 10s = câmera offline
+    const INTERVALO_RETRY = 5000;    // tenta reconectar a cada 5s
+    const SALTO_TELA = 6000;         // página parada por mais de 6s = tela esteve apagada
+    const TEMPO_CONEXAO = 15000;     // câmera não respondeu em 15s = tenta de novo
+    const TEMPO_VIDEO = 12000;       // vídeo não chegou em 12s = tenta de novo
 
     function lerSenha()    { try { return localStorage.getItem(CHAVE); } catch (e) { return null; } }
     function salvarSenha(x){ try { localStorage.setItem(CHAVE, x); } catch (e) {} }
@@ -41,9 +44,12 @@
     let senhaAtual = null;   // senha digitada nesta sessão (usada para reconectar)
     let conectado = false;
     let tentando = false;
+    let recebeuVideo = false;
     let ultimoPing = 0;
     let timerRetry = null;
     let timerVoltar = null;
+    let timerConexao = null;
+    let timerVideo = null;
     let tentativas = 0;
 
     function agendarRetry() {
@@ -59,6 +65,8 @@
       const eraOnline = conectado;
       conectado = false;
       tentando = false;
+      clearTimeout(timerConexao);
+      clearTimeout(timerVideo);
 
       const c = conn, k = call;
       conn = null;
@@ -76,9 +84,11 @@
     }
 
     function iniciarVideo() {
+      clearTimeout(timerConexao);
       tentativas = 0;
       conectado = true;
       tentando = false;
+      recebeuVideo = false;
       ultimoPing = Date.now();
 
       if (lembrar.checked) { salvarSenha(senhaAtual); esq.style.display = "inline-block"; }
@@ -86,13 +96,23 @@
 
       login.style.display = "none";
       alt.style.display = "inline-block";
+      lan.style.display = "inline-block";
       mostrarEstado("● Câmera online", "#2e7d32");
       s.textContent = "Chamando a câmera...";
 
       const vazio = document.createElement("canvas").captureStream();
       const k = peer.call(ID, vazio);
       call = k;
+
+      // Se o vídeo não chegar a tempo, tenta de novo
+      clearTimeout(timerVideo);
+      timerVideo = setTimeout(() => {
+        if (call === k && !recebeuVideo) reconectarAgora();
+      }, TEMPO_VIDEO);
+
       k.on("stream", remoto => {
+        recebeuVideo = true;
+        clearTimeout(timerVideo);
         v.srcObject = remoto;
         v.play().catch(() => {});
         s.textContent = "Recebendo vídeo!";
@@ -106,16 +126,30 @@
       mostrarEstado("Conectando à câmera...", "#ef6c00");
       s.textContent = "Verificando senha...";
 
+      // Se a câmera não responder a tempo, desiste e tenta de novo
+      clearTimeout(timerConexao);
+      timerConexao = setTimeout(() => {
+        if (tentando && !conectado) ficouOffline();
+      }, TEMPO_CONEXAO);
+
       const c = peer.connect(ID);
       conn = c;
       c.on("open", () => c.send({ tipo: "senha", valor: senhaAtual }));
       c.on("data", msg => {
         if (!msg) return;
         if (msg.tipo === "ping") { ultimoPing = Date.now(); return; }
+
+        if (msg.tipo === "lanterna") {
+          lan.textContent = msg.ligada ? "Lanterna: ligada" : "Lanterna: desligada";
+          if (msg.erro) s.textContent = msg.erro;
+          return;
+        }
+
         if (msg.tipo === "resultado") {
           if (msg.ok) {
             iniciarVideo();
           } else {
+            clearTimeout(timerConexao);
             senhaAtual = null;
             tentando = false;
             apagarSenha();
@@ -128,9 +162,11 @@
       c.on("close", () => { if (conn === c) ficouOffline(); });
     }
 
-    // Derruba o que estiver aberto e tenta de novo (usado pelo botão e pela volta da tela)
+    // Derruba o que estiver aberto e tenta de novo (botão Atualizar e volta da tela)
     function reconectarAgora() {
       clearTimeout(timerRetry);
+      clearTimeout(timerConexao);
+      clearTimeout(timerVideo);
       timerRetry = null;
       const c = conn, k = call;
       conn = null;
@@ -218,6 +254,10 @@
 
     alt.onclick = () => {
       if (conn && conn.open) conn.send({ tipo: "alternar" });
+    };
+
+    lan.onclick = () => {
+      if (conn && conn.open) conn.send({ tipo: "lanterna" });
     };
 
     esq.onclick = () => {
