@@ -1,271 +1,247 @@
 <!DOCTYPE html>
 <html>
 <body>
-  <h3>Monitoramento</h3>
-  <div id="estado" style="padding:8px;margin-bottom:8px;background:#888;color:#fff;font-weight:bold;">
-    Aguardando login
-  </div>
-  <div id="login">
-    <input id="senha" type="password" placeholder="Senha" size="25">
-    <button id="entrar">Entrar</button>
-    <br>
-    <label><input type="checkbox" id="lembrar"> Lembrar senha neste aparelho</label>
-  </div>
-  <video id="v" autoplay muted playsinline controls width="400"></video>
-  <br>
-  <button id="alt" style="display:none;font-size:18px;padding:12px 20px;">Alternar câmera</button>
-  <button id="lan" style="display:none;font-size:18px;padding:12px 20px;">Lanterna: desligada</button>
-  <button id="esq" style="display:none;font-size:14px;padding:8px 12px;">Esquecer senha</button>
-  <button id="atu" style="font-size:16px;padding:10px 16px;">Atualizar</button>
+  <h3>Câmera</h3>
+  <video id="v" autoplay muted playsinline width="300"></video>
   <p id="s">Iniciando...</p>
+  <p id="t"></p>
+  <p id="l"></p>
+  <button id="b" style="font-size:18px;padding:12px 20px;">Alternar câmera</button>
+  <pre id="log" style="font-size:12px;white-space:pre-wrap;background:#eee;padding:6px;"></pre>
+
+  <script>
+    function log(msg) {
+      var el = document.getElementById("log");
+      if (el) el.textContent += msg + "\n";
+    }
+    window.addEventListener("error", function (e) {
+      log("ERRO: " + e.message + " (linha " + e.lineno + ")");
+    });
+    window.addEventListener("unhandledrejection", function (e) {
+      log("ERRO (promessa): " + ((e.reason && e.reason.message) || e.reason));
+    });
+    log("1) página carregou");
+  </script>
+
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
+    // Se o servidor principal falhar, tenta um reserva
+    if (typeof Peer === "undefined") {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"><\/script>');
+    }
+  </script>
+
+  <script>
+    log("2) PeerJS " + (typeof Peer !== "undefined" ? "carregado" : "NÃO carregou"));
+
     const ID = "cam-k8x2m9qw7trz4plv3nb6";
-    const CHAVE = "3a0ebc7cce29d7b522e7a00fd6ecd881b510d1ab05f44ec066a8090da2b79e01";    // nome da gaveta onde a senha salva fica guardada
-    const TEMPO_LIMITE = 10000;      // sem ping por 10s = câmera offline
-    const INTERVALO_RETRY = 5000;    // tenta reconectar a cada 5s
-    const SALTO_TELA = 6000;         // página parada por mais de 6s = tela esteve apagada
-    const TEMPO_CONEXAO = 15000;     // câmera não respondeu em 15s = tenta de novo
-    const TEMPO_VIDEO = 12000;       // vídeo não chegou em 12s = tenta de novo
+    const SENHA_HASH = "3a0ebc7cce29d7b522e7a00fd6ecd881b510d1ab05f44ec066a8090da2b79e01";
 
-    function lerSenha()    { try { return localStorage.getItem(CHAVE); } catch (e) { return null; } }
-    function salvarSenha(x){ try { localStorage.setItem(CHAVE, x); } catch (e) {} }
-    function apagarSenha() { try { localStorage.removeItem(CHAVE); } catch (e) {} }
-
-    function mostrarEstado(texto, cor) {
-      estado.textContent = texto;
-      estado.style.background = cor;
-    }
-
-    const peer = new Peer();
-    let pronto = false;
-    let conn = null;
-    let call = null;
-    let senhaAtual = null;   // senha digitada nesta sessão (usada para reconectar)
-    let conectado = false;
-    let tentando = false;
-    let recebeuVideo = false;
-    let ultimoPing = 0;
-    let timerRetry = null;
-    let timerVoltar = null;
-    let timerConexao = null;
-    let timerVideo = null;
-    let tentativas = 0;
-
-    function agendarRetry() {
-      if (timerRetry || !senhaAtual) return;
-      timerRetry = setTimeout(() => {
-        timerRetry = null;
-        tentativas++;
-        conectar();
-      }, INTERVALO_RETRY);
-    }
-
-    function ficouOffline() {
-      const eraOnline = conectado;
-      conectado = false;
-      tentando = false;
-      clearTimeout(timerConexao);
-      clearTimeout(timerVideo);
-
-      const c = conn, k = call;
-      conn = null;
-      call = null;
-      try { if (k) k.close(); } catch (e) {}
-      try { if (c) c.close(); } catch (e) {}
-
-      v.srcObject = null;  // some a imagem congelada
-      mostrarEstado("● Câmera offline", "#c62828");
-      s.textContent = "Câmera offline. Tentativas de reconexão: " + tentativas;
-      if (eraOnline && navigator.vibrate) {
-        try { navigator.vibrate([300, 150, 300]); } catch (e) {}
-      }
-      agendarRetry();
-    }
-
-    function iniciarVideo() {
-      clearTimeout(timerConexao);
-      tentativas = 0;
-      conectado = true;
-      tentando = false;
-      recebeuVideo = false;
-      ultimoPing = Date.now();
-
-      if (lembrar.checked) { salvarSenha(senhaAtual); esq.style.display = "inline-block"; }
-      else apagarSenha();
-
-      login.style.display = "none";
-      alt.style.display = "inline-block";
-      lan.style.display = "inline-block";
-      mostrarEstado("● Câmera online", "#2e7d32");
-      s.textContent = "Chamando a câmera...";
-
-      const vazio = document.createElement("canvas").captureStream();
-      const k = peer.call(ID, vazio);
-      call = k;
-
-      // Se o vídeo não chegar a tempo, tenta de novo
-      clearTimeout(timerVideo);
-      timerVideo = setTimeout(() => {
-        if (call === k && !recebeuVideo) reconectarAgora();
-      }, TEMPO_VIDEO);
-
-      k.on("stream", remoto => {
-        recebeuVideo = true;
-        clearTimeout(timerVideo);
-        v.srcObject = remoto;
-        v.play().catch(() => {});
-        s.textContent = "Recebendo vídeo!";
-      });
-      k.on("close", () => { if (call === k) ficouOffline(); });
-    }
-
-    function conectar() {
-      if (!senhaAtual || tentando || conectado || !pronto) return;
-      tentando = true;
-      mostrarEstado("Conectando à câmera...", "#ef6c00");
-      s.textContent = "Verificando senha...";
-
-      // Se a câmera não responder a tempo, desiste e tenta de novo
-      clearTimeout(timerConexao);
-      timerConexao = setTimeout(() => {
-        if (tentando && !conectado) ficouOffline();
-      }, TEMPO_CONEXAO);
-
-      const c = peer.connect(ID);
-      conn = c;
-      c.on("open", () => c.send({ tipo: "senha", valor: senhaAtual }));
-      c.on("data", msg => {
-        if (!msg) return;
-        if (msg.tipo === "ping") { ultimoPing = Date.now(); return; }
-
-        if (msg.tipo === "lanterna") {
-          lan.textContent = msg.ligada ? "Lanterna: ligada" : "Lanterna: desligada";
-          if (msg.erro) s.textContent = msg.erro;
-          return;
-        }
-
-        if (msg.tipo === "resultado") {
-          if (msg.ok) {
-            iniciarVideo();
-          } else {
-            clearTimeout(timerConexao);
-            senhaAtual = null;
-            tentando = false;
-            apagarSenha();
-            login.style.display = "block";
-            mostrarEstado("Senha incorreta", "#c62828");
-            s.textContent = "Senha incorreta.";
-          }
-        }
-      });
-      c.on("close", () => { if (conn === c) ficouOffline(); });
-    }
-
-    // Derruba o que estiver aberto e tenta de novo (botão Atualizar e volta da tela)
-    function reconectarAgora() {
-      clearTimeout(timerRetry);
-      clearTimeout(timerConexao);
-      clearTimeout(timerVideo);
-      timerRetry = null;
-      const c = conn, k = call;
-      conn = null;
-      call = null;
-      try { if (k) k.close(); } catch (e) {}
-      try { if (c) c.close(); } catch (e) {}
-      conectado = false;
-      tentando = false;
-      v.srcObject = null;
-
-      // Sem senha digitada nesta sessão, o jeito é recarregar a página
-      if (!senhaAtual || peer.destroyed) { location.reload(); return; }
-
-      s.textContent = "Atualizando...";
-      mostrarEstado("Conectando à câmera...", "#ef6c00");
-      if (peer.disconnected) peer.reconnect();
-      setTimeout(conectar, 1000);
-    }
-
-    // A tela voltou (ou a rede voltou): confere se ainda está tudo vivo
-    function aoVoltar() {
-      if (!senhaAtual || timerVoltar) return;   // sem login ainda, ou já verificando
-      mostrarEstado("Verificando conexão...", "#ef6c00");
-      timerVoltar = setTimeout(() => {
-        timerVoltar = null;
-        const vivo = conectado && (Date.now() - ultimoPing < 5000);
-        if (vivo) {
-          mostrarEstado("● Câmera online", "#2e7d32");
-        } else {
-          reconectarAgora();
-        }
-      }, 1500);
-    }
-
-    // Eventos de volta da tela/rede
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") aoVoltar();
-    });
-    window.addEventListener("focus", aoVoltar);
-    window.addEventListener("pageshow", aoVoltar);
-    window.addEventListener("online", aoVoltar);
-
-    // Vigia: ping da câmera + detector de "página congelada"
-    let ultimoTick = Date.now();
-    setInterval(() => {
-      const agora = Date.now();
-      const parada = agora - ultimoTick;
-      ultimoTick = agora;
-
-      if (parada > SALTO_TELA) {   // a página ficou suspensa: provavelmente tela apagada
-        aoVoltar();
-        return;
-      }
-      if (conectado && agora - ultimoPing > TEMPO_LIMITE) ficouOffline();
-    }, 2000);
+    const peer = new Peer(ID);
+    log("3) Peer criado, conectando ao servidor...");
 
     peer.on("open", () => {
-      pronto = true;
-      const salva = lerSenha();
-      if (salva) {
-        senha.value = salva;
-        lembrar.checked = true;
-        entrar.click();
-      } else {
-        s.textContent = "Digite a senha.";
-      }
+      s.textContent = "Aguardando visualizador...";
+      log("4) conectado ao servidor ✔");
     });
-
-    peer.on("disconnected", () => peer.reconnect());
-
     peer.on("error", e => {
-      if (e.type === "peer-unavailable") {
-        ficouOffline();        // câmera não está registrada no servidor
-      } else {
-        s.textContent = "Erro do Peer: " + e.type;
-      }
+      s.textContent = "Erro do Peer: " + e.type;
+      log("Erro do Peer: " + e.type);
+      // ID ainda preso de uma sessão anterior: tenta de novo em 10s
+      if (e.type === "unavailable-id") setTimeout(() => location.reload(), 10000);
+    });
+    peer.on("disconnected", () => {
+      s.textContent = "Reconectando ao servidor...";
+      log("servidor desconectou, reconectando...");
+      peer.reconnect();
     });
 
-    entrar.onclick = () => {
-      if (!pronto) { s.textContent = "Aguarde a conexão..."; return; }
-      senhaAtual = senha.value;
-      tentando = false;
-      conectar();
-    };
+    let stream = null;
+    let wakeLock = null;
+    let facing = "environment";
+    let lanterna = false;
+    let temFlashApp = null;          // null = o app ainda não informou
+    let esperandoLanterna = null;
+    let calls = [];
+    const autorizados = new Set();
+    const conexoes = new Set();
 
-    alt.onclick = () => {
-      if (conn && conn.open) conn.send({ tipo: "alternar" });
-    };
+    async function sha256(texto) {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(texto));
+      return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+    }
 
-    lan.onclick = () => {
-      if (conn && conn.open) conn.send({ tipo: "lanterna" });
-    };
+    function avisarTodos(obj) {
+      conexoes.forEach(c => {
+        if (c.open && autorizados.has(c.peer)) {
+          try { c.send(obj); } catch (e) {}
+        }
+      });
+    }
 
-    esq.onclick = () => {
-      apagarSenha();
-      location.reload();
-    };
+    // ---- Tela sempre ligada ----
+    async function manterTelaLigada() {
+      try {
+        wakeLock = await navigator.wakeLock.request("screen");
+        t.textContent = "Tela mantida ligada ✔";
+        wakeLock.addEventListener("release", () => t.textContent = "Tela pode apagar ✖");
+      } catch (e) {
+        t.textContent = "Tela acesa indisponível: " + e.message;
+      }
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") manterTelaLigada();
+    });
 
-    atu.onclick = reconectarAgora;
+    // ---- Linha de diagnóstico da lanterna ----
+    function mostrarLinhaLanterna() {
+      const trilha = stream && stream.getVideoTracks()[0];
+      const cap = (trilha && trilha.getCapabilities) ? trilha.getCapabilities() : {};
+      if (cap.torch) {
+        l.textContent = "Lanterna: disponível pela câmera ✔";
+      } else if (temFlashApp === true) {
+        l.textContent = "Lanterna: disponível pelo app ✔";
+      } else if (temFlashApp === false) {
+        l.textContent = "Lanterna: este aparelho não tem flash ✖";
+      } else if (/; wv\)/.test(navigator.userAgent)) {
+        l.textContent = "Lanterna: aguardando o app...";
+      } else {
+        l.textContent = "Lanterna: indisponível ✖";
+      }
+    }
+
+    // ---- Câmera ----
+    async function abrirCamera() {
+      if (lanterna && temFlashApp) console.log("LANTERNA:OFF");
+
+      if (stream) stream.getTracks().forEach(tr => tr.stop());
+      s.textContent = "Pedindo a câmera...";
+      log("5) pedindo permissão da câmera...");
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: facing } },
+          audio: false
+        });
+      } catch (e) {
+        s.textContent = "Erro ao abrir a câmera: " + e.message;
+        log("Erro da câmera: " + e.name + " - " + e.message);
+        return;
+      }
+      log("6) câmera aberta ✔");
+      if (peer.open) s.textContent = "Aguardando visualizador...";
+      v.srcObject = stream;
+      const novaTrilha = stream.getVideoTracks()[0];
+
+      lanterna = false;
+      mostrarLinhaLanterna();
+      avisarTodos({ tipo: "lanterna", ligada: false, erro: null });
+
+      calls.forEach(c => {
+        const sender = c.peerConnection.getSenders()
+          .find(x => x.track && x.track.kind === "video");
+        if (sender) sender.replaceTrack(novaTrilha);
+      });
+    }
+
+    function alternarCamera() {
+      facing = (facing === "environment") ? "user" : "environment";
+      abrirCamera();
+    }
+    b.onclick = alternarCamera;
+
+    // ---- Lanterna ----
+    async function alternarLanterna() {
+      const nova = !lanterna;
+      const trilha = stream && stream.getVideoTracks()[0];
+      if (!trilha) return { erro: "A câmera não está ativa." };
+
+      const cap = trilha.getCapabilities ? trilha.getCapabilities() : {};
+      if (cap.torch) {
+        try {
+          await trilha.applyConstraints({ advanced: [{ torch: nova }] });
+          lanterna = nova;
+          return {};
+        } catch (e) {
+          // segue para o plano B
+        }
+      }
+
+      if (temFlashApp) {
+        console.log("LANTERNA:" + (nova ? "ON" : "OFF"));
+        clearTimeout(esperandoLanterna);
+        esperandoLanterna = setTimeout(() => {
+          avisarTodos({ tipo: "lanterna", ligada: lanterna, erro: "O app não confirmou a lanterna." });
+        }, 3000);
+        return { pendente: true };
+      }
+
+      if (temFlashApp === false) return { erro: "Este aparelho não tem flash." };
+      return { erro: "Lanterna indisponível neste aparelho ou navegador." };
+    }
+
+    // Funções chamadas pelo app (EvaluateJavaScript)
+    function definirFlashApp(tem) {
+      temFlashApp = !!tem;
+      mostrarLinhaLanterna();
+    }
+    function aoConfirmarLanterna(ligada) {
+      clearTimeout(esperandoLanterna);
+      lanterna = !!ligada;
+      avisarTodos({ tipo: "lanterna", ligada: lanterna, erro: null });
+    }
+    function aoErroLanterna(texto) {
+      clearTimeout(esperandoLanterna);
+      avisarTodos({ tipo: "lanterna", ligada: lanterna, erro: String(texto) });
+    }
+
+    // ---- Senha e comandos do visualizador ----
+    peer.on("connection", conn => {
+      conexoes.add(conn);
+      conn.on("close", () => conexoes.delete(conn));
+
+      conn.on("data", async msg => {
+        if (!msg) return;
+
+        if (msg.tipo === "senha") {
+          const ok = (await sha256(String(msg.valor))) === SENHA_HASH;
+          if (ok) autorizados.add(conn.peer);
+          log("tentativa de senha: " + (ok ? "correta" : "incorreta"));
+          conn.send({ tipo: "resultado", ok });
+          if (ok) conn.send({ tipo: "lanterna", ligada: lanterna, erro: null });
+        }
+
+        if (!autorizados.has(conn.peer)) return;
+
+        if (msg.tipo === "alternar") {
+          alternarCamera();
+        }
+
+        if (msg.tipo === "lanterna") {
+          const r = await alternarLanterna();
+          if (r.pendente) return;
+          avisarTodos({ tipo: "lanterna", ligada: lanterna, erro: r.erro || null });
+        }
+      });
+    });
+
+    // ---- Sinal de vida: ping a cada 3s ----
+    setInterval(() => avisarTodos({ tipo: "ping" }), 3000);
+
+    // ---- Chamada de vídeo (só para quem acertou a senha) ----
+    peer.on("call", call => {
+      if (!autorizados.has(call.peer) || !stream) {
+        call.close();
+        return;
+      }
+      call.answer(stream);
+      calls.push(call);
+      s.textContent = "Transmitindo!";
+      call.on("close", () => {
+        calls = calls.filter(c => c !== call);
+      });
+    });
+
+    abrirCamera().then(manterTelaLigada);
   </script>
 </body>
 </html>
