@@ -41,7 +41,7 @@
     log("3) Peer criado, conectando ao servidor...");
 
     peer.on("open", () => {
-      s.textContent = "Aguardando visualizador...";
+      atualizarStatus();
       log("4) conectado ao servidor ✔");
     });
     peer.on("error", e => {
@@ -77,6 +77,14 @@
           try { c.send(obj); } catch (e) {}
         }
       });
+    }
+
+    // Texto de status que reflete quantos visualizadores estão recebendo vídeo
+    function atualizarStatus() {
+      if (!peer.open) return;
+      s.textContent = calls.length > 0
+        ? "Transmitindo para " + calls.length + " visualizador(es)"
+        : "Aguardando visualizador...";
     }
 
     // ---- Tela sempre ligada ----
@@ -128,7 +136,7 @@
         return;
       }
       log("6) câmera aberta ✔");
-      if (peer.open) s.textContent = "Aguardando visualizador...";
+      atualizarStatus();
       v.srcObject = stream;
       const novaTrilha = stream.getVideoTracks()[0];
 
@@ -136,6 +144,7 @@
       mostrarLinhaLanterna();
       avisarTodos({ tipo: "lanterna", ligada: false, erro: null });
 
+      // Troca o vídeo de quem já está assistindo, sem derrubar a conexão
       calls.forEach(c => {
         const sender = c.peerConnection.getSenders()
           .find(x => x.track && x.track.kind === "video");
@@ -155,6 +164,7 @@
       const trilha = stream && stream.getVideoTracks()[0];
       if (!trilha) return { erro: "A câmera não está ativa." };
 
+      // 1) Tenta pela própria câmera
       const cap = trilha.getCapabilities ? trilha.getCapabilities() : {};
       if (cap.torch) {
         try {
@@ -166,6 +176,7 @@
         }
       }
 
+      // 2) Plano B: pede ao app (extensão do App Inventor); o app confirma depois
       if (temFlashApp) {
         console.log("LANTERNA:" + (nova ? "ON" : "OFF"));
         clearTimeout(esperandoLanterna);
@@ -210,7 +221,9 @@
           if (ok) conn.send({ tipo: "lanterna", ligada: lanterna, erro: null });
         }
 
+        // Comandos: só de quem acertou a senha
         if (!autorizados.has(conn.peer)) return;
+        if (msg.tipo !== "ping") log("comando recebido: " + msg.tipo);
 
         if (msg.tipo === "alternar") {
           alternarCamera();
@@ -218,14 +231,21 @@
 
         if (msg.tipo === "lanterna") {
           const r = await alternarLanterna();
-          if (r.pendente) return;
+          log("lanterna: " + (r.pendente ? "aguardando o app" : (r.erro ? "erro - " + r.erro : (lanterna ? "ligada" : "desligada"))));
+          if (r.pendente) return;   // aguarda a confirmação do app
           avisarTodos({ tipo: "lanterna", ligada: lanterna, erro: r.erro || null });
         }
       });
     });
 
-    // ---- Sinal de vida: ping a cada 3s ----
-    setInterval(() => avisarTodos({ tipo: "ping" }), 3000);
+    // ---- Sinal de vida (ping a cada 3s) e limpeza de chamadas que caíram ----
+    setInterval(() => {
+      avisarTodos({ tipo: "ping" });
+      const antes = calls.length;
+      calls = calls.filter(c => c.peerConnection &&
+        !["closed", "failed"].includes(c.peerConnection.iceConnectionState));
+      if (calls.length !== antes) atualizarStatus();
+    }, 3000);
 
     // ---- Chamada de vídeo (só para quem acertou a senha) ----
     peer.on("call", call => {
@@ -235,9 +255,10 @@
       }
       call.answer(stream);
       calls.push(call);
-      s.textContent = "Transmitindo!";
+      atualizarStatus();
       call.on("close", () => {
         calls = calls.filter(c => c !== call);
+        atualizarStatus();
       });
     });
 
