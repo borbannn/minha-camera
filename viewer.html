@@ -1,5 +1,14 @@
 <!DOCTYPE html>
 <html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <style>
+    html, body { touch-action: pan-x pan-y; }   /* sem zoom por pinça nem toque duplo */
+    input[type=range] { touch-action: pan-y; }  /* mantém a barra de sensibilidade arrastável */
+    video { width: 100%; max-width: 640px; height: auto; }
+  </style>
+</head>
 <body>
   <h3>Monitoramento</h3>
   <div id="estado" style="padding:8px;margin-bottom:8px;background:#888;color:#fff;font-weight:bold;">
@@ -11,7 +20,7 @@
     <br>
     <label><input type="checkbox" id="lembrar"> Lembrar senha neste aparelho</label>
   </div>
-  <video id="v" autoplay muted playsinline controls width="400"></video>
+  <video id="v" autoplay muted playsinline controls></video>
   <br>
   <button id="alt" style="display:none;font-size:18px;padding:12px 20px;">Alternar câmera</button>
   <button id="lan" style="display:none;font-size:18px;padding:12px 20px;">Lanterna: desligada</button>
