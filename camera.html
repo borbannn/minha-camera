@@ -9,13 +9,14 @@
   <button id="b" style="font-size:18px;padding:12px 20px;">Alternar câmera</button>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
-    const ID = "SEU-CODIGO-AQUI";
+    const ID = "cam-k8x2m9qw7trz4plv3nb6";
     const SENHA_HASH = "COLE-O-HASH-AQUI";
 
     const peer = new Peer(ID);
 
     peer.on("error", e => {
       s.textContent = "Erro do Peer: " + e.type;
+      // ID ainda preso de uma sessão anterior: tenta de novo em 10s
       if (e.type === "unavailable-id") setTimeout(() => location.reload(), 10000);
     });
     peer.on("disconnected", () => {
@@ -27,12 +28,11 @@
     let wakeLock = null;
     let facing = "environment";
     let lanterna = false;
-    let temFlashApp = null;          // null = o app ainda não informou
+    let temFlashApp = null;          // null = o app ainda não informou; true/false = informado
     let esperandoLanterna = null;    // temporizador de confirmação do app
     let calls = [];
     const autorizados = new Set();
     const conexoes = new Set();
-    const dentroDoApp = /; wv\)/.test(navigator.userAgent);
 
     async function sha256(texto) {
       const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(texto));
@@ -66,16 +66,23 @@
     function mostrarLinhaLanterna() {
       const trilha = stream && stream.getVideoTracks()[0];
       const cap = (trilha && trilha.getCapabilities) ? trilha.getCapabilities() : {};
-      if (cap.torch) l.textContent = "Lanterna: disponível pela câmera ✔";
-      else if (dentroDoApp && temFlashApp) l.textContent = "Lanterna: disponível pelo app ✔";
-      else if (dentroDoApp && temFlashApp === null) l.textContent = "Lanterna: aguardando o app...";
-      else l.textContent = "Lanterna: indisponível ✖";
+      if (cap.torch) {
+        l.textContent = "Lanterna: disponível pela câmera ✔";
+      } else if (temFlashApp === true) {
+        l.textContent = "Lanterna: disponível pelo app ✔";
+      } else if (temFlashApp === false) {
+        l.textContent = "Lanterna: este aparelho não tem flash ✖";
+      } else if (/; wv\)/.test(navigator.userAgent)) {
+        l.textContent = "Lanterna: aguardando o app...";
+      } else {
+        l.textContent = "Lanterna: indisponível ✖";
+      }
     }
 
     // ---- Câmera ----
     async function abrirCamera() {
       // Ao trocar de câmera, apaga a lanterna do app se estiver acesa
-      if (lanterna && dentroDoApp) console.log("LANTERNA:OFF");
+      if (lanterna && temFlashApp) console.log("LANTERNA:OFF");
 
       if (stream) stream.getTracks().forEach(tr => tr.stop());
       try {
@@ -94,6 +101,7 @@
       mostrarLinhaLanterna();
       avisarTodos({ tipo: "lanterna", ligada: false, erro: null });
 
+      // Troca o vídeo de quem já está assistindo, sem derrubar a conexão
       calls.forEach(c => {
         const sender = c.peerConnection.getSenders()
           .find(x => x.track && x.track.kind === "video");
@@ -125,82 +133,4 @@
         }
       }
 
-      // 2) Plano B: pede ao app (extensão do App Inventor); o app confirma depois
-      if (dentroDoApp && temFlashApp) {
-        console.log("LANTERNA:" + (nova ? "ON" : "OFF"));
-        clearTimeout(esperandoLanterna);
-        esperandoLanterna = setTimeout(() => {
-          avisarTodos({ tipo: "lanterna", ligada: lanterna, erro: "O app não confirmou a lanterna." });
-        }, 3000);
-        return { pendente: true };
-      }
-
-      return { erro: "Lanterna indisponível neste aparelho ou navegador." };
-    }
-
-    // Funções chamadas pelo app (EvaluateJavaScript)
-    function definirFlashApp(tem) {
-      temFlashApp = !!tem;
-      mostrarLinhaLanterna();
-    }
-    function aoConfirmarLanterna(ligada) {
-      clearTimeout(esperandoLanterna);
-      lanterna = !!ligada;
-      avisarTodos({ tipo: "lanterna", ligada: lanterna, erro: null });
-    }
-    function aoErroLanterna(texto) {
-      clearTimeout(esperandoLanterna);
-      avisarTodos({ tipo: "lanterna", ligada: lanterna, erro: String(texto) });
-    }
-
-    // ---- Senha e comandos do visualizador ----
-    peer.on("connection", conn => {
-      conexoes.add(conn);
-      conn.on("close", () => conexoes.delete(conn));
-
-      conn.on("data", async msg => {
-        if (!msg) return;
-
-        if (msg.tipo === "senha") {
-          const ok = (await sha256(String(msg.valor))) === SENHA_HASH;
-          if (ok) autorizados.add(conn.peer);
-          conn.send({ tipo: "resultado", ok });
-        }
-
-        // Comandos: só de quem acertou a senha
-        if (!autorizados.has(conn.peer)) return;
-
-        if (msg.tipo === "alternar") {
-          alternarCamera();
-        }
-
-        if (msg.tipo === "lanterna") {
-          const r = await alternarLanterna();
-          if (r.pendente) return;   // aguarda a confirmação do app
-          avisarTodos({ tipo: "lanterna", ligada: lanterna, erro: r.erro || null });
-        }
-      });
-    });
-
-    // ---- Sinal de vida: ping a cada 3s ----
-    setInterval(() => avisarTodos({ tipo: "ping" }), 3000);
-
-    // ---- Chamada de vídeo (só para quem acertou a senha) ----
-    peer.on("open", () => s.textContent = "Aguardando visualizador...");
-    peer.on("call", call => {
-      if (!autorizados.has(call.peer) || !stream) {
-        call.close();
-        return;
-      }
-      call.answer(stream);
-      calls.push(call);
-      s.textContent = "Transmitindo!";
-      call.on("close", () => {
-        calls = calls.filter(c => c !== call);
-      });
-    });
-
-    abrirCamera().then(manterTelaLigada);
-  </script>
-</body>
-</html>
+      // 2) Plano B: pede ao app (extensão
